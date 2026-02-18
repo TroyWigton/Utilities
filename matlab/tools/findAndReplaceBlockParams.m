@@ -4,19 +4,22 @@ function results = findAndReplaceBlockParams(modelName, options)
 %   results = findAndReplaceBlockParams('myModel', BlockType='Gain')
 %   Lists all Gain blocks in the model hierarchy.
 %
+%   results = findAndReplaceBlockParams('myModel', BlockType='Gain')
+%   Lists all Gain blocks in the currently active model.
+%
 %   results = findAndReplaceBlockParams('myModel', BlockType='Gain', PropertyName='SampleTime')
 %   Lists all Gain blocks and shows their SampleTime values.
 %
 %   results = findAndReplaceBlockParams('myModel', BlockType='Gain', SearchValue='0.01')
 %   Searches only Gain blocks for the value '0.01' across all dialog properties.
 %
-%   results = findAndReplaceBlockParams('myModel', BlockType='Gain', SearchValue='0.01', PropertyName='SampleTime')
+%   results = findAndReplaceBlockParams('myModel', BlockType='Gain', PropertyName='SampleTime', SearchValue='0.01')
 %   Searches only the SampleTime property of Gain blocks for the value '0.01'.
 %
 %   results = findAndReplaceBlockParams('myModel', SearchValue='0.01')
 %   Searches all dialog properties of every block for the value '0.01'.
 %
-%   results = findAndReplaceBlockParams('myModel', SearchValue='0.01', PropertyName='SampleTime')
+%   results = findAndReplaceBlockParams('myModel', PropertyName='SampleTime', SearchValue='0.01')
 %   Searches the SampleTime property of every block for the value '0.01'.
 %
 %   results = findAndReplaceBlockParams('myModel', SearchValue='0.01', NewValue='0.02')
@@ -30,9 +33,9 @@ function results = findAndReplaceBlockParams(modelName, options)
 %       BlockType                - (Optional) Restrict search to a specific block type
 %                                  (e.g. 'Gain', 'SubSystem'). When specified without a
 %                                  SearchValue, lists all blocks of this type.
-%       SearchValue              - (Optional) Value to search for in block properties.
 %       PropertyName             - (Optional) Specific block property to search. If omitted,
 %                                  all dialog parameters are searched.
+%       SearchValue              - (Optional) Value to search for in block properties.
 %       NewValue                 - (Optional) Replacement value. If omitted, search-only mode.
 %       PartialMatch             - (Optional) Use substring matching instead of exact match
 %                                  (case-sensitive). Default: false.
