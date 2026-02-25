@@ -14,7 +14,6 @@ function TestFindAndReplaceBlockParameters()
     testDir = fileparts(mfilename('fullpath'));
     toolsDir = fullfile(testDir, '..', 'tools');
     addpath(toolsDir, testDir);
-    cleanupPaths = onCleanup(@() rmpath(toolsDir, testDir));
 
     % Build and load model
     modelName = 'ExampleModel';
@@ -34,6 +33,7 @@ function TestFindAndReplaceBlockParameters()
         'Value replacement',                         @() testReplacement(modelName)
         'NewValue ignored in listing mode',          @() testNewValueWarning(modelName)
         'Error when no criteria provided',           @() testErrorNoCriteria(modelName)
+        'PropertyName only (no BlockType)',          @() testPropertyNameOnly(modelName)
     };
 
     % Run tests
@@ -311,9 +311,43 @@ function failures = runNewValueWarning(modelName)
     end
 end
 
+function [callStr, description, execFn] = testPropertyNameOnly(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', PropertyName=''SampleTime'')', modelName);
+    description = 'Lists all blocks possessing SampleTime with their current values (expects 8)';
+    execFn = @() runPropertyNameOnly(modelName);
+end
+
+function failures = runPropertyNameOnly(modelName)
+    results = findAndReplaceBlockParams(modelName, PropertyName='SampleTime');
+    expectedPaths = {
+        [modelName '/Gain1']
+        [modelName '/Gain2']
+        [modelName '/Gain3']
+        [modelName '/Constant1']
+        [modelName '/Constant2']
+        [modelName '/UnitDelay1']
+        [modelName '/UnitDelay2']
+        [modelName '/SubSystem/Gain4']};
+    failures = checkResults(results, 8, expectedPaths);
+    % Verify all results report the correct PropertyName
+    for k = 1:numel(results)
+        if ~strcmp(results(k).PropertyName, 'SampleTime')
+            failures{end+1} = sprintf('Expected PropertyName=SampleTime, got %s for %s', ...
+                results(k).PropertyName, results(k).BlockPath); %#ok<AGROW>
+        end
+    end
+    % Verify all results have a non-empty CurrentValue
+    for k = 1:numel(results)
+        if isempty(results(k).CurrentValue)
+            failures{end+1} = sprintf('Empty CurrentValue for %s', ...
+                results(k).BlockPath); %#ok<AGROW>
+        end
+    end
+end
+
 function [callStr, description, execFn] = testErrorNoCriteria(modelName)
     callStr = sprintf('findAndReplaceBlockParams(''%s'')', modelName);
-    description = 'Throws InsufficientArgs error when neither BlockType nor SearchValue provided';
+    description = 'Throws InsufficientArgs error when no BlockType, SearchValue, or PropertyName provided';
     execFn = @() runErrorNoCriteria(modelName);
 end
 

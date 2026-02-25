@@ -7,6 +7,9 @@ function results = findAndReplaceBlockParams(modelName, options)
 %   results = findAndReplaceBlockParams('myModel', BlockType='Gain')
 %   Lists all Gain blocks in the currently active model.
 %
+%   results = findAndReplaceBlockParams('myModel', PropertyName='SampleTime')
+%   Lists all blocks that have a SampleTime property with their current values.
+%
 %   results = findAndReplaceBlockParams('myModel', BlockType='Gain', PropertyName='SampleTime')
 %   Lists all Gain blocks and shows their SampleTime values.
 %
@@ -66,9 +69,9 @@ function results = findAndReplaceBlockParams(modelName, options)
     partialMatch = options.PartialMatch;
 
     % Require at least one search criterion
-    if isempty(blockType) && isempty(searchValue)
+    if isempty(blockType) && isempty(searchValue) && isempty(propertyName)
         error('findAndReplaceBlockParams:InsufficientArgs', ...
-            'Specify a BlockType, a SearchValue, or both.');
+            'Specify a BlockType, a SearchValue, a PropertyName, or a combination.');
     end
 
     % Build optional filter args for find_system
@@ -191,7 +194,7 @@ function results = listBlocks(modelName, propertyName, variantFilter, blockTypeF
                     val = mat2str(val);
                 end
             catch
-                val = '<N/A>';
+                continue; % Block doesn't have this property, skip it
             end
             propName = propertyName;
         else
