@@ -28,20 +28,29 @@ function results = findAndReplaceBlockParams(modelName, options)
 %   results = findAndReplaceBlockParams('myModel', SearchValue='0.01', NewValue='0.02')
 %   Finds all blocks with any property equal to '0.01' and replaces with '0.02'.
 %
-%   results = findAndReplaceBlockParams('myModel', SearchValue='Sample', PartialMatch=true)
+%   results = findAndReplaceBlockParams('myModel', SearchValue='Sample', PartialValueMatch=true)
 %   Finds all blocks with any property containing the substring 'Sample'.
+%
+%   results = findAndReplaceBlockParams('myModel', BlockType='.*Integrator')
+%   Finds all blocks whose BlockType matches the regex '.*Integrator'
+%   (e.g. Integrator, DiscreteIntegrator). Regex is automatically enabled
+%   when BlockType contains regex metacharacters.
 %
 %   Arguments:
 %       modelName                - Name of the Simulink model (without .slx extension).
 %       BlockType                - (Optional) Restrict search to a specific block type
 %                                  (e.g. 'Gain', 'SubSystem'). When specified without a
 %                                  SearchValue, lists all blocks of this type.
+%                                  Supports MATLAB regex (e.g. '.*Integrator' matches
+%                                  Integrator and DiscreteIntegrator). Regex is
+%                                  automatically enabled when metacharacters are
+%                                  detected and only applies to BlockType filtering.
 %       PropertyName             - (Optional) Specific block property to search. If omitted,
 %                                  all dialog parameters are searched.
 %       SearchValue              - (Optional) Value to search for in block properties.
 %       NewValue                 - (Optional) Replacement value. If omitted, search-only mode.
-%       PartialMatch             - (Optional) Use substring matching instead of exact match
-%                                  (case-sensitive). Default: false.
+%       PartialValueMatch        - (Optional) Use substring matching instead of exact match
+%                                  for SearchValue comparisons (case-sensitive). Default: false.
 %       SearchAllVariants        - (Optional) Search inactive Variant Subsystem choices in
 %                                  addition to active ones. Default: false.
 %       IncludeModelReferences   - (Optional) Recurse into Model Reference blocks.
@@ -56,7 +65,7 @@ function results = findAndReplaceBlockParams(modelName, options)
         options.SearchValue (1,:) {mustBeText} = ''
         options.PropertyName (1,:) {mustBeText} = ''
         options.NewValue (1,:) {mustBeText} = ''
-        options.PartialMatch (1,1) logical = false
+        options.PartialValueMatch (1,1) logical = false
         options.SearchAllVariants (1,1) logical = false
         options.IncludeModelReferences (1,1) logical = true
     end
@@ -66,7 +75,7 @@ function results = findAndReplaceBlockParams(modelName, options)
     searchValue = char(options.SearchValue);
     propertyName = char(options.PropertyName);
     newValue = char(options.NewValue);
-    partialMatch = options.PartialMatch;
+    partialMatch = options.PartialValueMatch;
 
     % Require at least one search criterion
     if isempty(blockType) && isempty(searchValue) && isempty(propertyName)
@@ -87,6 +96,13 @@ function results = findAndReplaceBlockParams(modelName, options)
         blockTypeFilter = {};
     end
 
+    % Auto-enable RegExp if BlockType contains regex metacharacters
+    if ~isempty(regexp(blockType, '[\.\*\+\?\[\]\(\)\{\}\^\$\|\\]', 'once'))
+        regexpFilter = {'RegExp', 'on'};
+    else
+        regexpFilter = {};
+    end
+
     % Strip .slx or .mdl extension if provided
     [~, modelName, ~] = fileparts(modelName);
 
@@ -103,7 +119,7 @@ function results = findAndReplaceBlockParams(modelName, options)
 
     % Perform the search
     results = searchModel(modelName, searchValue, propertyName, ...
-        partialMatch, variantFilter, blockTypeFilter, options.IncludeModelReferences, searchedModels);
+        partialMatch, variantFilter, blockTypeFilter, regexpFilter, options.IncludeModelReferences, searchedModels);
 
     % Display results
     if isempty(results)
@@ -144,7 +160,7 @@ end
 %% --- Helper Functions ---
 
 function results = searchModel(modelName, searchValue, propertyName, ...
-        partialMatch, variantFilter, blockTypeFilter, includeModelRefs, searchedModels)
+        partialMatch, variantFilter, blockTypeFilter, regexpFilter, includeModelRefs, searchedModels)
     % Skip if already searched (handles circular model references)
     if searchedModels.isKey(modelName)
         results = emptyResults();
@@ -155,23 +171,23 @@ function results = searchModel(modelName, searchValue, propertyName, ...
     fprintf('Searching model: %s\n', modelName);
 
     if isempty(searchValue)
-        results = listBlocks(modelName, propertyName, variantFilter, blockTypeFilter);
+        results = listBlocks(modelName, propertyName, variantFilter, blockTypeFilter, regexpFilter);
     elseif ~isempty(propertyName)
         results = searchSpecificProperty(modelName, searchValue, propertyName, ...
-            partialMatch, variantFilter, blockTypeFilter);
+            partialMatch, variantFilter, blockTypeFilter, regexpFilter);
     else
         results = searchAllProperties(modelName, searchValue, partialMatch, ...
-            variantFilter, blockTypeFilter);
+            variantFilter, blockTypeFilter, regexpFilter);
     end
 
     % Recurse into model references
     if includeModelRefs
         results = searchModelReferences(modelName, searchValue, propertyName, ...
-            partialMatch, variantFilter, blockTypeFilter, includeModelRefs, searchedModels, results);
+            partialMatch, variantFilter, blockTypeFilter, regexpFilter, includeModelRefs, searchedModels, results);
     end
 end
 
-function results = listBlocks(modelName, propertyName, variantFilter, blockTypeFilter)
+function results = listBlocks(modelName, propertyName, variantFilter, blockTypeFilter, regexpFilter)
     % List blocks without value matching (used when SearchValue is empty)
     results = emptyResults();
 
@@ -179,6 +195,7 @@ function results = listBlocks(modelName, propertyName, variantFilter, blockTypeF
         'LookUnderMasks', 'all', ...
         'FollowLinks', 'on', ...
         variantFilter{:}, ...
+        regexpFilter{:}, ...
         'Type', 'block', ...
         blockTypeFilter{:});
 
@@ -209,12 +226,14 @@ function results = listBlocks(modelName, propertyName, variantFilter, blockTypeF
 end
 
 function results = searchSpecificProperty(modelName, searchValue, propertyName, ...
-        partialMatch, variantFilter, blockTypeFilter)
+        partialMatch, variantFilter, blockTypeFilter, regexpFilter)
     results = emptyResults();
 
-    if partialMatch
+    if partialMatch || ~isempty(regexpFilter)
+        % Use manual search when partial matching or when regex is active
+        % (to prevent RegExp from also applying to PropertyName/SearchValue)
         [blocks, values] = manualPropertySearch(modelName, searchValue, ...
-            propertyName, true, variantFilter, blockTypeFilter);
+            propertyName, partialMatch, variantFilter, blockTypeFilter, regexpFilter);
     else
         try
             blocks = find_system(modelName, ...
@@ -227,7 +246,7 @@ function results = searchSpecificProperty(modelName, searchValue, propertyName, 
         catch
             % If find_system fails (e.g. unrecognized parameter), fall back to manual search
             [blocks, values] = manualPropertySearch(modelName, searchValue, ...
-                propertyName, false, variantFilter, blockTypeFilter);
+                propertyName, false, variantFilter, blockTypeFilter, regexpFilter);
         end
     end
 
@@ -245,11 +264,12 @@ function results = searchSpecificProperty(modelName, searchValue, propertyName, 
 end
 
 function [blocks, values] = manualPropertySearch(modelName, searchValue, ...
-        propertyName, partialMatch, variantFilter, blockTypeFilter)
+        propertyName, partialMatch, variantFilter, blockTypeFilter, regexpFilter)
     allBlocks = find_system(modelName, ...
         'LookUnderMasks', 'all', ...
         'FollowLinks', 'on', ...
         variantFilter{:}, ...
+        regexpFilter{:}, ...
         'Type', 'block', ...
         blockTypeFilter{:});
     matched = false(size(allBlocks));
@@ -270,13 +290,14 @@ function [blocks, values] = manualPropertySearch(modelName, searchValue, ...
 end
 
 function results = searchAllProperties(modelName, searchValue, partialMatch, ...
-        variantFilter, blockTypeFilter)
+        variantFilter, blockTypeFilter, regexpFilter)
     results = emptyResults();
 
     allBlocks = find_system(modelName, ...
         'LookUnderMasks', 'all', ...
         'FollowLinks', 'on', ...
         variantFilter{:}, ...
+        regexpFilter{:}, ...
         'Type', 'block', ...
         blockTypeFilter{:});
 
@@ -312,7 +333,7 @@ function results = searchAllProperties(modelName, searchValue, partialMatch, ...
 end
 
 function results = searchModelReferences(modelName, searchValue, propertyName, ...
-        partialMatch, variantFilter, blockTypeFilter, includeModelRefs, searchedModels, results)
+        partialMatch, variantFilter, blockTypeFilter, regexpFilter, includeModelRefs, searchedModels, results)
     refBlocks = find_system(modelName, ...
         'LookUnderMasks', 'all', ...
         'FollowLinks', 'on', ...
@@ -336,7 +357,7 @@ function results = searchModelReferences(modelName, searchValue, propertyName, .
         end
 
         refResults = searchModel(refModelName, searchValue, propertyName, ...
-            partialMatch, variantFilter, blockTypeFilter, includeModelRefs, searchedModels);
+            partialMatch, variantFilter, blockTypeFilter, regexpFilter, includeModelRefs, searchedModels);
         results = [results, refResults]; %#ok<AGROW>
     end
 end

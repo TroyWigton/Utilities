@@ -28,7 +28,7 @@ function TestFindAndReplaceBlockParameters()
         'Block type + SearchValue (all properties)', @() testBlockTypeSearchAll(modelName)
         'SearchValue + PropertyName (all types)',    @() testSearchValueProperty(modelName)
         'SearchValue only (all types, all props)',   @() testSearchValueAll(modelName)
-        'Partial match',                             @() testPartialMatch(modelName)
+        'Partial match',                             @() testPartialValueMatch(modelName)
         'No matches found',                          @() testNoMatches(modelName)
         'Value replacement',                         @() testReplacement(modelName)
         'NewValue ignored in listing mode',          @() testNewValueWarning(modelName)
@@ -248,11 +248,11 @@ function failures = runSearchValueAll(modelName)
     end
 end
 
-function [callStr, description, execFn] = testPartialMatch(modelName)
-    callStr = sprintf('findAndReplaceBlockParams(''%s'', SearchValue=''0.0'', PropertyName=''SampleTime'', PartialMatch=true)', modelName);
+function [callStr, description, execFn] = testPartialValueMatch(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', SearchValue=''0.0'', PropertyName=''SampleTime'', PartialValueMatch=true)', modelName);
     description = 'Substring match ''0.0'' in SampleTime matches 0.01/0.05 but not 0.1/-1 (expects 5)';
     execFn = @() checkResults( ...
-        findAndReplaceBlockParams(modelName, SearchValue='0.0', PropertyName='SampleTime', PartialMatch=true), 5, {
+        findAndReplaceBlockParams(modelName, SearchValue='0.0', PropertyName='SampleTime', PartialValueMatch=true), 5, {
             [modelName '/Gain2']
             [modelName '/Gain3']
             [modelName '/Constant1']
