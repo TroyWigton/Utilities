@@ -34,6 +34,14 @@ function TestFindAndReplaceBlockParameters()
         'NewValue ignored in listing mode',          @() testNewValueWarning(modelName)
         'Error when no criteria provided',           @() testErrorNoCriteria(modelName)
         'PropertyName only (no BlockType)',          @() testPropertyNameOnly(modelName)
+        'BlockType regex (OR pattern)',              @() testBlockTypeRegexOr(modelName)
+        'BlockType regex (wildcard pattern)',         @() testBlockTypeRegexWildcard(modelName)
+        'PropertyName regex',                        @() testPropertyNameRegex(modelName)
+        'SearchValue regex',                         @() testSearchValueRegex(modelName)
+        'Case-insensitive BlockType',                @() testCaseInsensitiveBlockType(modelName)
+        'Case-insensitive SearchValue',              @() testCaseInsensitiveSearchValue(modelName)
+        'Combined: BlockType regex + PropName regex', @() testCombinedRegex(modelName)
+        'Dot in SearchValue is not regex',           @() testDotNotRegex(modelName)
     };
 
     % Run tests
@@ -361,6 +369,115 @@ function failures = runErrorNoCriteria(modelName)
             failures{end+1} = sprintf('Expected InsufficientArgs error, got: %s', ME.identifier);
         end
     end
+end
+
+%% --- Regex and Case Sensitivity Tests ---
+
+function [callStr, description, execFn] = testBlockTypeRegexOr(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', BlockType=''Gain|Constant'')', modelName);
+    description = 'BlockType regex OR matches Gain and Constant blocks (expects 6)';
+    execFn = @() checkResults( ...
+        findAndReplaceBlockParams(modelName, BlockType='Gain|Constant'), 6, {
+            [modelName '/Gain1']
+            [modelName '/Gain2']
+            [modelName '/Gain3']
+            [modelName '/Constant1']
+            [modelName '/Constant2']
+            [modelName '/SubSystem/Gain4']});
+end
+
+function [callStr, description, execFn] = testBlockTypeRegexWildcard(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', BlockType=''Unit.*'')', modelName);
+    description = 'BlockType regex wildcard matches UnitDelay blocks (expects 2)';
+    execFn = @() checkResults( ...
+        findAndReplaceBlockParams(modelName, BlockType='Unit.*'), 2, {
+            [modelName '/UnitDelay1']
+            [modelName '/UnitDelay2']});
+end
+
+function [callStr, description, execFn] = testPropertyNameRegex(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', BlockType=''Gain'', PropertyName=''.*[Tt]ime'')', modelName);
+    description = 'PropertyName regex matches SampleTime on all Gain blocks (expects 4)';
+    execFn = @() runPropertyNameRegex(modelName);
+end
+
+function failures = runPropertyNameRegex(modelName)
+    results = findAndReplaceBlockParams(modelName, BlockType='Gain', PropertyName='.*[Tt]ime');
+    failures = checkResults(results, 4, {
+        [modelName '/Gain1']
+        [modelName '/Gain2']
+        [modelName '/Gain3']
+        [modelName '/SubSystem/Gain4']});
+    for k = 1:numel(results)
+        if ~strcmp(results(k).PropertyName, 'SampleTime')
+            failures{end+1} = sprintf('Expected PropertyName=SampleTime, got %s for %s', ...
+                results(k).PropertyName, results(k).BlockPath); %#ok<AGROW>
+        end
+    end
+end
+
+function [callStr, description, execFn] = testSearchValueRegex(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', PropertyName=''SampleTime'', SearchValue=''0\\.0[1-5]'')', modelName);
+    description = 'SearchValue regex matches 0.01 and 0.05 but not 0.1 or -1 (expects 5)';
+    execFn = @() checkResults( ...
+        findAndReplaceBlockParams(modelName, PropertyName='SampleTime', SearchValue='0\.0[1-5]'), 5, {
+            [modelName '/Gain2']
+            [modelName '/Gain3']
+            [modelName '/Constant1']
+            [modelName '/UnitDelay1']
+            [modelName '/SubSystem/Gain4']});
+end
+
+function [callStr, description, execFn] = testCaseInsensitiveBlockType(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', BlockType=''gain'', CaseSensitive=false)', modelName);
+    description = 'Case-insensitive exact BlockType ''gain'' matches Gain blocks (expects 4)';
+    execFn = @() checkResults( ...
+        findAndReplaceBlockParams(modelName, BlockType='gain', CaseSensitive=false), 4, {
+            [modelName '/Gain1']
+            [modelName '/Gain2']
+            [modelName '/Gain3']
+            [modelName '/SubSystem/Gain4']});
+end
+
+function [callStr, description, execFn] = testCaseInsensitiveSearchValue(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', PropertyName=''SampleTime'', SearchValue=''0.01'', CaseSensitive=false)', modelName);
+    description = 'Case-insensitive exact SearchValue matches 0.01 (expects 4)';
+    execFn = @() checkResults( ...
+        findAndReplaceBlockParams(modelName, PropertyName='SampleTime', SearchValue='0.01', CaseSensitive=false), 4, {
+            [modelName '/Gain2']
+            [modelName '/Constant1']
+            [modelName '/UnitDelay1']
+            [modelName '/SubSystem/Gain4']});
+end
+
+function [callStr, description, execFn] = testCombinedRegex(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', BlockType=''Gain|Constant'', PropertyName=''.*[Tt]ime'', SearchValue=''0\\.0[1-5]'')', modelName);
+    description = 'Combined: BlockType regex + PropertyName regex + SearchValue regex (expects 4)';
+    execFn = @() checkResults( ...
+        findAndReplaceBlockParams(modelName, BlockType='Gain|Constant', PropertyName='.*[Tt]ime', SearchValue='0\.0[1-5]'), 4, {
+            [modelName '/Gain2']
+            [modelName '/Gain3']
+            [modelName '/Constant1']
+            [modelName '/SubSystem/Gain4']});
+end
+
+function [callStr, description, execFn] = testDotNotRegex(modelName)
+    callStr = sprintf('findAndReplaceBlockParams(''%s'', PropertyName=''SampleTime'', SearchValue=''0.01'')', modelName);
+    description = 'Dot in SearchValue ''0.01'' is treated as literal, not regex (expects 4 exact matches)';
+    execFn = @() runDotNotRegex(modelName);
+end
+
+function failures = runDotNotRegex(modelName)
+    results = findAndReplaceBlockParams(modelName, PropertyName='SampleTime', SearchValue='0.01');
+    failures = checkResults(results, 4, {
+        [modelName '/Gain2']
+        [modelName '/Constant1']
+        [modelName '/UnitDelay1']
+        [modelName '/SubSystem/Gain4']});
+    % Verify no blocks with SampleTime='0.1' or '0X01' sneak in
+    failures = [failures, checkExcludes(results, {
+        [modelName '/Constant2']
+        [modelName '/UnitDelay2']})];
 end
 
 %% --- Assertion Helpers ---
