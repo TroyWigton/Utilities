@@ -433,21 +433,178 @@ function performReplacement(results, searchValue, newValue, modelName)
     fprintf('\nReplacing "%s" -> "%s" in %d block(s)...\n', ...
         searchValue, newValue, numel(results));
 
-    successCount = 0;
+    % Pre-classify: figure out where each edit actually needs to land. Blocks
+    % inside a Subsystem Reference instance cannot be edited via their
+    % instance path while the parent model holds the SS Ref locked — the edit
+    % must happen on the SS Ref's source .slx with all instances unloaded.
+    direct = struct('BlockPath', {}, 'PropertyName', {});
+    bySource = struct();
     for k = 1:numel(results)
-        try
-            set_param(results(k).BlockPath, results(k).PropertyName, newValue);
-            fprintf('  Updated: %s [%s]\n', results(k).BlockPath, results(k).PropertyName);
-            successCount = successCount + 1;
-        catch ME
-            warning('findAndReplaceBlockParams:SetParamFailed', ...
-                'Failed to set %s on %s: %s', ...
-                results(k).PropertyName, results(k).BlockPath, ME.message);
+        [src, srcPath] = enclosingSubsystemReference(results(k).BlockPath);
+        if isempty(src)
+            direct(end+1) = struct('BlockPath', results(k).BlockPath, ...
+                'PropertyName', results(k).PropertyName); %#ok<AGROW>
+        else
+            field = matlab.lang.makeValidName(src);
+            entry = struct('SourcePath', srcPath, ...
+                'PropertyName', results(k).PropertyName, ...
+                'Instance', results(k).BlockPath);
+            if ~isfield(bySource, field)
+                bySource.(field) = struct('Source', src, 'Entries', entry);
+            else
+                bySource.(field).Entries(end+1) = entry;
+            end
+        end
+    end
+    srcFields = fieldnames(bySource);
+
+    if ~isempty(srcFields)
+        nSrcEdits = 0;
+        for sk = 1:numel(srcFields)
+            nSrcEdits = nSrcEdits + numel(bySource.(srcFields{sk}).Entries);
+        end
+        fprintf('  Plan: %d direct edit(s), %d edit(s) via %d referenced subsystem source(s):\n', ...
+            numel(direct), nSrcEdits, numel(srcFields));
+        for sk = 1:numel(srcFields)
+            e = bySource.(srcFields{sk});
+            fprintf('    %s: %d edit(s)\n', e.Source, numel(e.Entries));
         end
     end
 
-    fprintf('\nReplacement complete. %d of %d block(s) updated.\n', successCount, numel(results));
-    fprintf('NOTE: Changes are in memory only. Use save_system(''%s'') to persist.\n', modelName);
+    % Phase 1: edit referenced subsystem sources. Requires modelName closed.
+    sourceSuccess = 0;
+    if ~isempty(srcFields)
+        if strcmp(get_param(modelName, 'Dirty'), 'on')
+            warning('findAndReplaceBlockParams:DirtyModel', ...
+                ['Cannot edit referenced subsystem sources because "%s" has unsaved changes ' ...
+                 'that would be lost. Save it first (save_system(''%s'')), then re-run.'], ...
+                modelName, modelName);
+            return;
+        end
+
+        fprintf('\nClosing %s to unlock referenced subsystem source(s)...\n', modelName);
+        close_system(modelName, 0);
+
+        for sk = 1:numel(srcFields)
+            e = bySource.(srcFields{sk});
+            src = e.Source;
+
+            wasLoaded = bdIsLoaded(src);
+            if ~wasLoaded
+                try
+                    load_system(src);
+                catch ME
+                    warning('findAndReplaceBlockParams:LoadFailed', ...
+                        'Could not load referenced subsystem source "%s": %s', src, ME.message);
+                    continue;
+                end
+            end
+
+            % Dedupe: multiple instances often map to the same source path.
+            seen = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+            for ek = 1:numel(e.Entries)
+                ent = e.Entries(ek);
+                key = [ent.SourcePath '|' ent.PropertyName];
+                if seen.isKey(key), continue; end
+                seen(key) = true;
+                try
+                    set_param(ent.SourcePath, ent.PropertyName, newValue);
+                    fprintf('  Updated via source: %s [%s]\n', ent.SourcePath, ent.PropertyName);
+                    sourceSuccess = sourceSuccess + 1;
+                catch ME
+                    warning('findAndReplaceBlockParams:SetParamFailed', ...
+                        'Failed to set %s on %s (for instance %s): %s', ...
+                        ent.PropertyName, ent.SourcePath, ent.Instance, ME.message);
+                end
+            end
+
+            try
+                save_system(src);
+                fprintf('  Saved: %s\n', src);
+            catch ME
+                warning('findAndReplaceBlockParams:SaveFailed', ...
+                    'Could not save %s: %s', src, ME.message);
+            end
+
+            if ~wasLoaded
+                close_system(src, 0);
+            end
+        end
+
+        fprintf('\nReopening %s...\n', modelName);
+        load_system(modelName);
+    end
+
+    % Phase 2: edit direct (non-SS-Ref) blocks inside modelName.
+    directSuccess = 0;
+    for k = 1:numel(direct)
+        try
+            set_param(direct(k).BlockPath, direct(k).PropertyName, newValue);
+            fprintf('  Updated: %s [%s]\n', direct(k).BlockPath, direct(k).PropertyName);
+            directSuccess = directSuccess + 1;
+        catch ME
+            warning('findAndReplaceBlockParams:SetParamFailed', ...
+                'Failed to set %s on %s: %s', ...
+                direct(k).PropertyName, direct(k).BlockPath, ME.message);
+        end
+    end
+
+    fprintf('\nReplacement complete.\n');
+    fprintf('  Direct: %d of %d updated\n', directSuccess, numel(direct));
+    if ~isempty(srcFields)
+        fprintf('  Via referenced subsystem source(s): %d unique edit(s) applied and saved\n', sourceSuccess);
+    end
+    fprintf('NOTE: Direct changes to "%s" are in memory only. Use save_system(''%s'') to persist.\n', ...
+        modelName, modelName);
+end
+
+function [sourceModel, sourcePath] = enclosingSubsystemReference(blockPath)
+    % Walk up from blockPath looking for the closest ancestor block with a
+    % non-empty ReferencedSubsystem. Returns the source model name and the
+    % equivalent path inside it. Uses get_param('Parent') / get_param('Name')
+    % so paths containing '//' (escaped slashes in block names) work.
+    sourceModel = '';
+    sourcePath = '';
+
+    current = blockPath;
+    childRel = '';
+    while true
+        try
+            parent = get_param(current, 'Parent');
+        catch
+            return;
+        end
+        if isempty(parent) || ~contains(parent, '/')
+            return;
+        end
+
+        try
+            currentName = get_param(current, 'Name');
+        catch
+            return;
+        end
+        currentNameEsc = strrep(currentName, '/', '//');
+
+        if isempty(childRel)
+            childRel = currentNameEsc;
+        else
+            childRel = [currentNameEsc '/' childRel]; %#ok<AGROW>
+        end
+
+        refSub = '';
+        try
+            refSub = get_param(parent, 'ReferencedSubsystem');
+        catch
+        end
+
+        if ~isempty(refSub)
+            sourceModel = refSub;
+            sourcePath = [sourceModel '/' childRel];
+            return;
+        end
+
+        current = parent;
+    end
 end
 
 function tf = matchesValue(val, searchValue, partialMatch, useValueRegex, caseSensitive)
