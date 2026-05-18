@@ -473,6 +473,7 @@ function performReplacement(results, searchValue, newValue, modelName)
 
     % Phase 1: edit referenced subsystem sources. Requires modelName closed.
     sourceSuccess = 0;
+    successfulSourceKeys = containers.Map('KeyType', 'char', 'ValueType', 'logical');
     if ~isempty(srcFields)
         if strcmp(get_param(modelName, 'Dirty'), 'on')
             warning('findAndReplaceBlockParams:DirtyModel', ...
@@ -511,6 +512,7 @@ function performReplacement(results, searchValue, newValue, modelName)
                     set_param(ent.SourcePath, ent.PropertyName, newValue);
                     fprintf('  Updated via source: %s [%s]\n', ent.SourcePath, ent.PropertyName);
                     sourceSuccess = sourceSuccess + 1;
+                    successfulSourceKeys(key) = true;
                 catch ME
                     warning('findAndReplaceBlockParams:SetParamFailed', ...
                         'Failed to set %s on %s (for instance %s): %s', ...
@@ -549,11 +551,30 @@ function performReplacement(results, searchValue, newValue, modelName)
         end
     end
 
+    % Count how many of the original result blocks were ultimately changed.
+    % For source-routed entries, an instance counts as changed if its
+    % (SourcePath, PropertyName) edit succeeded — even if dedupe meant
+    % several instances rode on a single set_param call.
+    instancesViaSource = 0;
+    for sk = 1:numel(srcFields)
+        e = bySource.(srcFields{sk});
+        for ek = 1:numel(e.Entries)
+            ent = e.Entries(ek);
+            key = [ent.SourcePath '|' ent.PropertyName];
+            if successfulSourceKeys.isKey(key)
+                instancesViaSource = instancesViaSource + 1;
+            end
+        end
+    end
+    totalChanged = directSuccess + instancesViaSource;
+
     fprintf('\nReplacement complete.\n');
     fprintf('  Direct: %d of %d updated\n', directSuccess, numel(direct));
     if ~isempty(srcFields)
-        fprintf('  Via referenced subsystem source(s): %d unique edit(s) applied and saved\n', sourceSuccess);
+        fprintf('  Via referenced subsystem source(s): %d unique edit(s) covering %d instance(s)\n', ...
+            sourceSuccess, instancesViaSource);
     end
+    fprintf('  Total blocks changed: %d of %d\n', totalChanged, numel(results));
     fprintf('NOTE: Direct changes to "%s" are in memory only. Use save_system(''%s'') to persist.\n', ...
         modelName, modelName);
 end
